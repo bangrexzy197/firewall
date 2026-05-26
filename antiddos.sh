@@ -272,11 +272,9 @@ iptables -A INPUT -m set --match-set blacklist_udp src -j DROP
 iptables -A INPUT -m set --match-set blacklist_tcp src -j DROP
 iptables -A INPUT -m set --match-set autoban src -j DROP
 
-// FRAGMENTED PACKET DROP
 iptables -A INPUT -f -j LOG --log-prefix "FRAGMENTED_DROP: "
 iptables -A INPUT -f -j DROP
 
-// TCP TIMESTAMP FILTERING - BLOCK OS FINGERPRINTING
 iptables -A INPUT -p tcp -m tcp --tcp-flags SYN,ACK SYN,ACK -m string --string "timestamp" --algo bm -j LOG --log-prefix "TCP_TIMESTAMP: "
 iptables -A INPUT -p tcp -m tcp --tcp-flags SYN,ACK SYN,ACK -m string --string "timestamp" --algo bm -j DROP
 
@@ -287,13 +285,11 @@ iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m tcpmss --mss 9000:65535 
 iptables -A FORWARD -p tcp --tcp-flags SYN,ACK SYN,ACK -m tcpmss --mss 1:500 -j DROP
 iptables -A FORWARD -p tcp --tcp-flags SYN,ACK SYN,ACK -m tcpmss --mss 9000:65535 -j DROP
 
-// ECN FLOOD PROTECTION
 iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m ecn --ecn-tcp-cwr -j LOG --log-prefix "ECN_CWR: "
 iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m ecn --ecn-tcp-cwr -j DROP
 iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m ecn --ecn-tcp-ece -j LOG --log-prefix "ECN_ECE: "
 iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m ecn --ecn-tcp-ece -j DROP
 
-// SIZE LIMIT - BLOKIR PACKET BESAR (LAYER 4)
 iptables -A INPUT -p tcp -m length --length 0:100 -j ACCEPT
 iptables -A INPUT -p tcp -m length --length 100:1500 -j ACCEPT
 iptables -A INPUT -p tcp -m length --length 1500:3000 -m limit --limit 5/second --limit-burst 10 -j ACCEPT
@@ -314,7 +310,6 @@ iptables -A INPUT -p udp -m length --length 1500:65535 -j LOG --log-prefix "UDP_
 iptables -A INPUT -p udp -m length --length 1500:65535 -j SET --add-set autoban src
 iptables -A INPUT -p udp -m length --length 1500:65535 -j DROP
 
-// LAYER 7 REQUEST SIZE LIMIT - HTTP BODY TOO LARGE
 iptables -A INPUT -p tcp --dport 80 -m string --string "POST" --algo bm --to 1000 -m length --length 0:2048 -j ACCEPT
 iptables -A INPUT -p tcp --dport 80 -m string --string "POST" --algo bm --to 1000 -m length --length 2048:8192 -j LOG --log-prefix "HTTP_POST_LARGE: "
 iptables -A INPUT -p tcp --dport 80 -m string --string "POST" --algo bm --to 1000 -m length --length 2048:8192 -j SET --add-set autoban src
@@ -629,69 +624,9 @@ systemctl restart docker 2>/dev/null || true
 systemctl restart pteroq 2>/dev/null || true
 nginx -t && systemctl restart nginx
 
-cat > /usr/local/bin/attack-logger << 'EOF'
-
-tcpdump -l -nn -i any 'tcp[tcpflags] & tcp-syn != 0 or udp or icmp or (tcp[tcpflags] & tcp-rst != 0) or (tcp[tcpflags] & tcp-fin != 0)' 2>/dev/null | while read line; do
-  ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n 1)
-  time=$(date "+%Y-%m-%d %H:%M:%S")
-  
-  if [ -z "$ip" ]; then
-    continue
-  fi
-  
-  if echo "$line" | grep -qi "Flags \[S\]"; then
-    type="SYN_FLOOD"
-  elif echo "$line" | grep -qi "Flags \[R\]"; then
-    type="RST_ATTACK"
-  elif echo "$line" | grep -qi "Flags \[F\]"; then
-    type="FIN_SCAN"
-  elif echo "$line" | grep -qi "UDP"; then
-    type="UDP_FLOOD"
-  elif echo "$line" | grep -qi "ICMP"; then
-    type="ICMP_ATTACK"
-  else
-    type="ATTACK_DETECTED"
-  fi
-  
-  echo "$ip | $time | $type" >> /var/log/file.log
-done
-EOF
-
-chmod +x /usr/local/bin/attack-logger
-
-cat > /etc/systemd/system/attack-logger.service << 'EOF'
-[Unit]
-Description=Attack Logger
-After=network.target
-
-[Service]
-ExecStart=/bin/bash /usr/local/bin/attack-logger
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/logrotate.d/attack-log << 'EOF'
-/var/log/file.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-    create 644 root root
-    postrotate
-        systemctl restart attack-logger
-    endscript
-}
-EOF
-
-systemctl daemon-reload
-systemctl enable attack-logger
-systemctl restart attack-logger
-
 cat > /etc/nginx/conf.d/fake-headers.conf << 'EOF'
+add_header CF-Cache-Status "MISS" always;
+add_header CF-RAY "9000000000000000-AMS" always;
 add_header X-RateLimit-Limit "100" always;
 add_header X-RateLimit-Remaining "0" always;
 add_header X-RateLimit-Reset "3600" always;
@@ -707,72 +642,22 @@ cat <<'HTML_EOF' > 429.php
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>429 - Too Many Requests</title>
-
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-
 <style>
-*{
-    margin:0;
-    padding:0;
-    box-sizing:border-box;
-    font-family:Arial,sans-serif;
-}
-
-body{
-    background:#000;
-    height:100vh;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    text-align:center;
-    color:#fff;
-}
-
-.box{
-    width:90%;
-    max-width:320px;
-}
-
-h1{
-    font-size:20px;
-    font-weight:700;
-    margin-bottom:25px;
-}
-
-button{
-    width:100%;
-    padding:14px;
-    border:none;
-    border-radius:35px;
-    background:linear-gradient(135deg,#2563eb,#3b82f6);
-    color:#fff;
-    font-size:17px;
-    font-weight:600;
-    cursor:pointer;
-    transition:.2s;
-    box-shadow:0 0 20px rgba(59,130,246,.35);
-}
-
-button i{
-    margin-right:8px;
-}
-
-button:active{
-    transform:scale(.98);
-}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Arial,sans-serif;}
+body{background:#000;height:100vh;display:flex;justify-content:center;align-items:center;text-align:center;color:#fff;}
+.box{width:90%;max-width:320px;}
+h1{font-size:20px;font-weight:700;margin-bottom:25px;}
+button{width:100%;padding:14px;border:none;border-radius:35px;background:linear-gradient(135deg,#2563eb,#3b82f6);color:#fff;font-size:17px;font-weight:600;cursor:pointer;transition:.2s;box-shadow:0 0 20px rgba(59,130,246,.35);}
+button i{margin-right:8px;}
+button:active{transform:scale(.98);}
 </style>
 </head>
 <body>
-
 <div class="box">
     <h1>Too Many Requests</h1>
-
-    <button onclick="location.reload()">
-        <i class="fa-solid fa-rotate-right"></i>
-        Refresh page
-    </button>
+    <button onclick="location.reload()"><i class="fa-solid fa-rotate-right"></i>Refresh page</button>
 </div>
-
 </body>
 </html>
 HTML_EOF
@@ -796,79 +681,6 @@ $uri = $_SERVER['REQUEST_URI'] ?? '';
 $path = parse_url($uri, PHP_URL_PATH) ?? '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
-// PACKET RATE LIMIT
-$packetCountFile = sys_get_temp_dir() . "/packet_" . md5($ip);
-$maxPackets = 500;
-$packetWindow = 10;
-
-if (!file_exists($packetCountFile)) {
-    $packetData = ["count" => 1, "time" => time()];
-    file_put_contents($packetCountFile, json_encode($packetData));
-} else {
-    $packetData = json_decode(file_get_contents($packetCountFile), true);
-    if (!is_array($packetData)) {
-        $packetData = ["count" => 0, "time" => time()];
-    }
-    
-    if (time() - $packetData["time"] > $packetWindow) {
-        $packetData = ["count" => 1, "time" => time()];
-    } else {
-        $packetData["count"]++;
-    }
-    
-    file_put_contents($packetCountFile, json_encode($packetData));
-}
-
-if ($packetData["count"] > $maxPackets && !$isWhitelistedIp && !$isWhitelistedUa && !$isWhitelistedPath) {
-    banIpIptables($ip, "Packet rate exceeded: {$packetData['count']} packets in {$packetWindow} sec");
-    http_response_code(429);
-    die("🚫 Packet rate limit exceeded.");
-}
-
-// BANDWIDTH LIMIT (bytes per request)
-$maxBodySize = 1024 * 1024; // 1MB
-$contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
-if ($contentLength > $maxBodySize && !$isWhitelistedIp && !$isWhitelistedUa && !$isWhitelistedPath) {
-    banIpIptables($ip, "Request too large: {$contentLength} bytes");
-    http_response_code(413);
-    die("🚫 Request entity too large.");
-}
-
-// CONCURRENT REQUEST LIMIT
-$concurrentFile = sys_get_temp_dir() . "/concurrent_" . md5($ip);
-if (!file_exists($concurrentFile)) {
-    $concurrentData = ["requests" => 1, "start_time" => time()];
-    file_put_contents($concurrentFile, json_encode($concurrentData));
-} else {
-    $concurrentData = json_decode(file_get_contents($concurrentFile), true);
-    if (!is_array($concurrentData)) {
-        $concurrentData = ["requests" => 1, "start_time" => time()];
-    } else {
-        $concurrentData["requests"]++;
-        file_put_contents($concurrentFile, json_encode($concurrentData));
-    }
-    
-    if ($concurrentData["requests"] > 50 && !$isWhitelistedIp && !$isWhitelistedUa && !$isWhitelistedPath) {
-        banIpIptables($ip, "Concurrent requests exceeded: {$concurrentData['requests']}");
-        http_response_code(429);
-        die("🚫 Too many concurrent requests.");
-    }
-    
-    if (time() - $concurrentData["start_time"] > 5) {
-        $concurrentData = ["requests" => 1, "start_time" => time()];
-        file_put_contents($concurrentFile, json_encode($concurrentData));
-    }
-}
-
-// PPS (Packets Per Second) via sysctl
-if (function_exists('shell_exec')) {
-    $pps = shell_exec("cat /proc/net/dev | grep " . posix_uname()['nodename'] . " | awk '{print $2}'");
-    if ($pps && $pps > 10000) {
-        http_response_code(503);
-        die("<html><head><title>503 Service Temporarily Unavailable</title></head><body><h1>503 Service Temporarily Unavailable</h1><p>High packet rate. Please try again later.</p></body></html>");
-    }
-}
-
 $whitelistIps = [
     '168.144.129.131',
     '114.10.134.224',
@@ -876,47 +688,22 @@ $whitelistIps = [
 ];
 
 $whitelistUa = [
-    'Wings',
-    'Go-http-client',
-    'Docker',
-    'kube-probe',
-    'cadvisor',
-    'prometheus',
-    'grafana',
-    'consul',
-    'nomad',
-    'vault',
-    'traefik',
-    'nginx-ingress',
-    'istio',
-    'envoy',
-    'linkerd'
+    'Wings', 'Go-http-client', 'Docker', 'kube-probe', 'cadvisor',
+    'prometheus', 'grafana', 'consul', 'nomad', 'vault', 'traefik',
+    'nginx-ingress', 'istio', 'envoy', 'linkerd'
 ];
 
 $whitelistPaths = [
-    '/health',
-    '/healthz',
-    '/ready',
-    '/live',
-    '/metrics',
-    '/ping',
-    '/status'
+    '/health', '/healthz', '/ready', '/live', '/metrics', '/ping', '/status'
 ];
 
-$isApi =
-    (function_exists('str_starts_with')
-        ? str_starts_with($path, '/api/')
-        : strpos($path, '/api/') === 0
-    ) ||
-    strpos($path, '/api/client/') === 0 ||
-    strpos($path, '/api/application/') === 0;
-
+$isApi = strpos($path, '/api/') === 0 || strpos($path, '/api/client/') === 0 || strpos($path, '/api/application/') === 0;
 $isWings = stripos($ua, 'Wings') !== false || stripos($ua, 'Go-http-client') !== false || $ip === '127.0.0.1';
-$isDocker = stripos($ua, 'Docker') !== false || stripos($ua, 'containerd') !== false || stripos($ua, 'runc') !== false;
+$isDocker = stripos($ua, 'Docker') !== false || stripos($ua, 'containerd') !== false;
 $isK8s = stripos($ua, 'kube-probe') !== false || stripos($ua, 'cadvisor') !== false;
 $isMonitoring = stripos($ua, 'prometheus') !== false || stripos($ua, 'grafana') !== false;
 $isWhitelistedIp = in_array($ip, $whitelistIps);
-$isWhitelistedUa = in_array($ua, $whitelistUa) || stripos($ua, 'Docker') !== false || stripos($ua, 'k3s') !== false;
+$isWhitelistedUa = in_array($ua, $whitelistUa) || stripos($ua, 'Docker') !== false;
 $isWhitelistedPath = in_array($path, $whitelistPaths) || strpos($path, '/.well-known/') === 0;
 
 if ($isApi || $isWings || $isDocker || $isK8s || $isMonitoring || $isWhitelistedIp || $isWhitelistedUa || $isWhitelistedPath || $path === '/favicon.ico') {
