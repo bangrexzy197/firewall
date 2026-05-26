@@ -1,6 +1,11 @@
 #!/bin/bash
 
-# Warna keren untuk teks proses
+# Warna
+R='\033[0;31m'
+G='\033[0;32m'
+Y='\033[1;33m'
+C='\033[0;36m'
+NC='\033[0m'
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -9,95 +14,40 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
-CHECKMARK='\033[0;32m✓\033[0m'
-CROSS='\033[0;31m✗\033[0m'
-ARROW='\033[1;36m➜\033[0m'
 
-# Fungsi untuk teks berwarna
-print_status() {
-    echo -e "${ARROW} ${CYAN}[+]${NC} $1"
-}
-
-print_success() {
-    echo -e "${GREEN}${CHECKMARK} SUCCESS:${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}${CROSS} ERROR:${NC} $1"
-}
-
-print_info() {
-    echo -e "${BLUE}[i]${NC} $1"
-}
-
-print_step() {
-    echo -e "\n${PURPLE}${BOLD}════════════════════════════════════════════════════════════${NC}"
-    echo -e "${PURPLE}${BOLD}  $1${NC}"
-    echo -e "${PURPLE}${BOLD}════════════════════════════════════════════════════════════${NC}\n"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[!] WARNING:${NC} $1"
-}
-
-# Banner
-echo -e "${CYAN}${BOLD}"
-echo "╔══════════════════════════════════════════════════════════════════════════╗"
-echo "║                    AURORA FIREWALL INSTALLER v2.0                        ║"
-echo "║                      PTERODACTYL HARDENING SCRIPT                        ║"
-echo "╚══════════════════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
+echo -e "${C}════════════════════════════════════════${NC}"
+echo -e "${C}     AURORA FIREWALL INSTALLER${NC}"
+echo -e "${C}════════════════════════════════════════${NC}\n"
 
 DIR="/var/www/pterodactyl/public"
 if [ ! -d "$DIR" ]; then
-  print_info "Direktori default tidak ditemukan, mencari secara otomatis..."
   DIR=$(find /var/www -type d -name "public" 2>/dev/null | grep "pterodactyl" | head -n 1 || true)
 fi
 
-[ -z "${DIR:-}" ] && { print_error "Direktori public tidak ditemukan!"; exit 1; }
-cd "$DIR" 2>/dev/null || { print_error "Gagal masuk ke direktori $DIR"; exit 1; }
-
-print_step "STEP 1: BACKUP INDEX.PHP"
+[ -z "${DIR:-}" ] && { echo -e "${R}[!] Public not found${NC}"; exit 1; }
+cd "$DIR" 2>/dev/null || exit 1
 
 if [ -f "index.php" ] && [ ! -f "index.php.bak" ]; then
   cp index.php index.php.bak
-  print_success "Backup created: $DIR/index.php.bak"
-elif [ -f "index.php" ] && [ -f "index.php.bak" ]; then
-  print_info "Backup already exists, skipping backup"
-else
-  print_error "index.php not found in $DIR"
-  exit 1
+  echo -e "${G}[✓] Backup created${NC}"
 fi
 
 INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 [ -z "$INTERFACE" ] && INTERFACE="eth0"
-print_info "Network interface: $INTERFACE"
 
-print_step "STEP 2: INSTALLING DEPENDENCIES"
-
-print_status "Updating package list..."
+echo -e "${Y}[→] Installing packages...${NC}"
 apt update -y > /dev/null 2>&1
-print_success "Package list updated"
-
-print_status "Installing required packages..."
 apt install -y iptables iptables-persistent netfilter-persistent ipset conntrack ufw fail2ban curl dnsutils net-tools wondershaper trickle php-curl rsyslog > /dev/null 2>&1
-print_success "All dependencies installed"
-
-print_step "STEP 3: CONFIGURING SERVICES"
 
 systemctl enable rsyslog 2>/dev/null || true
 systemctl restart rsyslog 2>/dev/null || true
-print_success "Rsyslog configured"
 
-print_status "Loading kernel modules..."
 modprobe ip_tables 2>/dev/null || true
 modprobe iptable_filter 2>/dev/null || true
 modprobe iptable_nat 2>/dev/null || true
 modprobe nf_conntrack 2>/dev/null || true
 modprobe br_netfilter 2>/dev/null || true
 modprobe xt_SYNPROXY 2>/dev/null || true
-print_success "Kernel modules loaded"
 
 systemctl enable docker 2>/dev/null || true
 systemctl restart docker 2>/dev/null || true
@@ -113,30 +63,23 @@ BAN_LOG="/var/log/ban.log"
 touch $BAN_LOG
 chmod 644 $BAN_LOG
 
-print_step "STEP 4: CONFIGURING IPSET WHITELIST"
-
 ipset create whitelist hash:ip -exist
 ipset create whitelist6 hash:ip -exist 2>/dev/null || true
 
 WHITELIST_IPS=("114.10.134.224" "68.183.228.145" "168.144.129.131")
 for ip in "${WHITELIST_IPS[@]}"; do
     ipset add whitelist $ip -exist 2>/dev/null
-    print_status "Whitelisted: $ip"
 done
 
 VPS_IP=$(curl -s ifconfig.me 2>/dev/null)
-[ -n "$VPS_IP" ] && ipset add whitelist $VPS_IP -exist 2>/dev/null && print_success "VPS IP whitelisted: $VPS_IP"
+[ -n "$VPS_IP" ] && ipset add whitelist $VPS_IP -exist 2>/dev/null
 
-print_status "Adding local network rules..."
 iptables -I INPUT -s 127.0.0.1 -j ACCEPT
 iptables -I INPUT -s 10.0.0.0/8 -j ACCEPT
 iptables -I INPUT -s 172.16.0.0/12 -j ACCEPT
 iptables -I INPUT -s 192.168.0.0/16 -j ACCEPT
 iptables -I INPUT -i docker0 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -i br-+ -j ACCEPT 2>/dev/null || true
-print_success "Local network rules added"
-
-print_step "STEP 5: APPLYING KERNEL HARDENING"
 
 cat > /etc/sysctl.d/99-hardening.conf << 'EOF'
 net.ipv4.tcp_syncookies=1
@@ -183,9 +126,6 @@ fs.suid_dumpable=0
 EOF
 
 sysctl --system >/dev/null 2>&1
-print_success "Kernel hardening applied"
-
-print_step "STEP 6: CONFIGURING FAIL2BAN"
 
 mkdir -p /etc/fail2ban
 
@@ -311,9 +251,6 @@ EOF
 
 systemctl enable fail2ban 2>/dev/null || true
 systemctl restart fail2ban 2>/dev/null || true
-print_success "Fail2ban configured and started"
-
-print_step "STEP 7: CONFIGURING IPSET BLACKLISTS"
 
 ipset create blacklist hash:ip timeout 86400 -exist
 ipset create blacklist_udp hash:ip timeout 3600 -exist
@@ -321,7 +258,6 @@ ipset create blacklist_tcp hash:ip timeout 3600 -exist
 ipset create udp_flood hash:ip timeout 300 -exist
 ipset create tcp_flood hash:ip timeout 300 -exist
 ipset create autoban hash:ip timeout 86400 -exist
-print_success "IPSet blacklists created"
 
 log_ban_ip() {
     local ip=$1
@@ -332,7 +268,7 @@ log_ban_ip() {
     fi
 }
 
-print_step "STEP 8: APPLYING IPTABLES RULES"
+echo -e "${Y}[→] Applying iptables rules...${NC}"
 
 iptables -F INPUT
 iptables -F FORWARD
@@ -629,10 +565,6 @@ iptables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
 iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
 iptables -A INPUT -p tcp --tcp-flags SYN,ACK SYN,ACK -m state --state NEW -j DROP
 
-print_success "IPTables rules applied"
-
-print_step "STEP 9: CONFIGURING NGINX"
-
 cat > /etc/nginx/conf.d/http2-rapid-reset.conf << 'EOF'
 limit_req_zone $binary_remote_addr zone=http2_limit:10m rate=20r/s;
 limit_conn_zone $binary_remote_addr zone=http2_conn:10m;
@@ -720,9 +652,6 @@ add_header Retry-After "3600" always;
 EOF
 
 nginx -t && systemctl reload nginx
-print_success "Nginx configured"
-
-print_step "STEP 10: CREATING PHP FILES"
 
 cat <<'HTML_EOF' > 429.php
 <!DOCTYPE html>
@@ -957,17 +886,11 @@ PHP_EOF
 ipset create blacklist hash:ip timeout 86400 -exist 2>/dev/null
 iptables -I INPUT -m set --match-set blacklist src -j DROP 2>/dev/null
 
-print_success "PHP files created"
-
-print_step "INSTALLATION COMPLETE"
-
-echo -e "\n${GREEN}${BOLD}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}${BOLD}║                         FIREWALL INSTALL DONE                             ║${NC}"
-echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════════════════════════╝${NC}\n"
+echo -e "${G}[✓] FIREWALL INSTALL DONE${NC}"
+echo -e "${C}════════════════════════════════════════${NC}"
 
 echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────┐${NC}"
 echo -e "${CYAN}│${NC} ${YELLOW}Firewall Status:${NC}     ${GREEN}ACTIVE${NC}                                                          ${CYAN}│${NC}"
-echo -e "${CYAN}│${NC} ${YELLOW}Interface:${NC}         ${WHITE}$INTERFACE${NC}                                                          ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC} ${YELLOW}Rate Limit:${NC}        ${WHITE}30 req/sec per IP${NC}                                                  ${CYAN}│${NC}"
 echo -e "${CYAN}│${NC} ${YELLOW}Fail2ban:${NC}          ${WHITE}Active${NC}                                                          ${CYAN}│${NC}"
 echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────┘${NC}\n"
