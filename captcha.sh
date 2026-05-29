@@ -444,7 +444,7 @@ async function checkBrowser() {
     if (navigator.webdriver === true || navigator.userAgent.includes('Headless')) {
         checks.isHeadless = true;
     }
-    
+
     try {
         const canvas = document.createElement('canvas');
         canvas.width = 200;
@@ -459,7 +459,7 @@ async function checkBrowser() {
         ctx.fillRect(50, 20, 30, 20);
         checks.canvasFingerprint = canvas.toDataURL();
     } catch(e) {}
-    
+
     try {
         const canvas = document.createElement('canvas');
         const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -471,7 +471,7 @@ async function checkBrowser() {
             }
         }
     } catch(e) {}
-    
+
     try {
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const analyser = audioCtx.createAnalyser();
@@ -640,46 +640,19 @@ $whitelistPaths = [
     '/status'
 ];
 
-$isApi =
-    strpos($path, '/api/') === 0 ||
-    strpos($path, '/api/client/') === 0 ||
-    strpos($path, '/api/application/') === 0;
-
-$isWings =
-    stripos($ua, 'Wings') !== false ||
-    stripos($ua, 'Go-http-client') !== false;
-
-$isDocker =
-    stripos($ua, 'Docker') !== false ||
-    stripos($ua, 'containerd') !== false;
-
+$isApi = strpos($path, '/api/') === 0 || strpos($path, '/api/client/') === 0 || strpos($path, '/api/application/') === 0;
+$isWings = stripos($ua, 'Wings') !== false || stripos($ua, 'Go-http-client') !== false;
+$isDocker = stripos($ua, 'Docker') !== false || stripos($ua, 'containerd') !== false;
 $isWhitelistedIp = in_array($ip, $whitelistIps);
-
 $isWhitelistedUa = in_array($ua, $whitelistUa);
+$isWhitelistedPath = in_array($path, $whitelistPaths) || strpos($path, '/.well-known/') === 0;
 
-$isWhitelistedPath =
-    in_array($path, $whitelistPaths) ||
-    strpos($path, '/.well-known/') === 0;
-
-$skipVerifikasi =
-(
-    ($isApi && $isWhitelistedIp) ||
-    $isWings ||
-    $isDocker ||
-    $isWhitelistedIp ||
-    $isWhitelistedUa ||
-    $isWhitelistedPath ||
-    $path === '/favicon.ico' ||
-    $path === '/challenge.php'
-);
+$skipVerifikasi = $isApi || $isWings || $isDocker || $isWhitelistedIp || $isWhitelistedUa || $isWhitelistedPath || $path === '/favicon.ico' || $path === '/challenge.php';
 
 if (!$skipVerifikasi) {
     $verifiedFile = sys_get_temp_dir() . "/verified_" . md5($ip);
-
-    $isVerified =
-        file_exists($verifiedFile) &&
-        (time() - filemtime($verifiedFile)) < 900;
-
+    $isVerified = file_exists($verifiedFile) && (time() - filemtime($verifiedFile)) < 900;
+    
     if (!$isVerified) {
         require __DIR__ . '/challenge.php';
         exit;
